@@ -1,0 +1,3 @@
+graft dst_incidence
+global-exclude *.py[cod] __pycache__ *.so *.ipynb
+recursive-exclude  dst_incidence/jupy *
