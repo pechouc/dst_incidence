@@ -1,0 +1,4 @@
+sku,country,unit,seller,min_price,min_price_date,max_price,max_price_date,current_price,current_price_date,average_price
+B000CRBEJ2,fr,€,amazon,23.38,2020-06-22,54.8,2023-05-29,38.57,2023-12-03,39.38
+B000CRBEJ2,fr,€,new,8.0,2017-07-16,50.0,2018-10-27,,,36.98
+B000CRBEJ2,fr,€,used,16.0,2018-10-20,125.0,2018-09-20,,,34.43
