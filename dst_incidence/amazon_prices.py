@@ -4,18 +4,15 @@
 
 import os
 path_to_dir = os.path.dirname(os.path.abspath(__file__))
+data_raw_dir = "/Users/Paul-Emmanuel/Desktop/PhD/3_DST_incidence/data_raw"
 
 import time
+import copy
 
 from bs4 import BeautifulSoup
 
 import numpy as np
 import pandas as pd
-
-from mimetypes import guess_extension
-from seleniumwire import webdriver
-from selenium.webdriver.chrome.options import Options
-from fake_useragent import UserAgent
 
 from PIL import Image
 
@@ -28,13 +25,13 @@ import re
 
 from datetime import datetime, date
 
-from utils import clean_date_string
+from dst_incidence.utils import clean_date_string
 
 # ======================================================================================================================
-# --- Core Python class ------------------------------------------------------------------------------------------------
+# --- Python class to collect price histories --------------------------------------------------------------------------
 # ======================================================================================================================
 
-class AmazonPriceCollector():
+class PriceHistoryCollector():
 
     def __init__(self, sku_reference, country, temp_folder):
 
@@ -43,20 +40,6 @@ class AmazonPriceCollector():
         self.sku_reference = sku_reference
         self.country = country
         self.temp_folder = temp_folder
-
-        self.height = 6200
-        self.width = 12000
-        self.base = "https://charts.camelcamelcamel.com/"
-
-        ua = UserAgent()
-        user_agent = ua.random
-
-        options = Options()
-        options.add_argument(f"window-size={np.random.randint(100, 750)},{np.random.randint(100, 750)}")
-        options.add_argument("--auto-open-devtools-for-tabs")
-        # options.add_argument(f'--user-agent={user_agent}')
-
-        self.driver = webdriver.Chrome(chrome_options=options)
 
         self.sellers = {'amazon': {}}
 
@@ -73,11 +56,11 @@ class AmazonPriceCollector():
 
         self.path_to_price_data = os.path.join(path_to_dir, "data", "prices")
 
-        self.unit_correspondence = {'fr': '€'}
+        self.unit_correspondence = {'France': '€'}
 
     def collect_and_clean_data(self):
 
-        self.fetch_additional_information()
+        # self.fetch_product_information()
         self.fetch_price_history_charts()
 
         self.build_price_history_from_charts()
@@ -92,15 +75,26 @@ class AmazonPriceCollector():
 
         self.save_results()
 
-        self.clean_everything()
+    def fetch_product_information(self):
 
-    def fetch_additional_information(self):
+        product_country_dir = f"products_{self.country}"
+        product_country_dir = os.path.join(data_raw_dir, product_country_dir)
 
-        url_to_info = f"https://{self.country}.camelcamelcamel.com/product/{self.sku_reference}?context=search"
+        for html_file in os.listdir(product_country_dir):
 
-        self.driver.get(url_to_info)
+            path_to_html_file = os.path.join(product_country_dir, html_file)
 
-        soup = BeautifulSoup(self.driver.page_source, "html.parser")
+            with open(path_to_html_file, 'r') as html_file_opened:
+                html_content = html_file_opened.read()
+
+                if html_content.count(self.sku_reference) > 2:
+                    self.product_page_source = html_content
+                    self.full_product_name = html_file
+
+                else:
+                    continue
+
+        soup = BeautifulSoup(self.product_page_source, "html.parser")
 
         if len(soup.find_all(class_="core-msg spacer")) > 0 and soup.find_all(class_="core-msg spacer")[0].text:
             time.sleep(15 * 60)
@@ -128,54 +122,58 @@ class AmazonPriceCollector():
 
         self.product_data = pd.read_html(str(soup.find_all(class_='product_fields')[0]))[0]
 
-    def fetch_price_history_charts(self):
+    # def fetch_price_history_charts(self):
 
-        del self.driver.requests
+    #     self.paths_to_charts = copy.deepcopy(self.sellers)
 
-        time.sleep(np.random.randint(20, 30))
+    #     for seller in self.paths_to_charts.keys():
 
-        self.paths_to_charts = self.sellers.copy()
+    #         url_to_img = self.base + self.country + "/" + self.sku_reference + "/" + f'{seller}.png'
+    #         url_to_img += f"?force=1&zero=0&w={self.width}&h={self.height}&desired=false&legend=1&ilt=1&tp=all&fo=0&lang=fr_FR"
 
-        for seller in self.paths_to_charts.keys():
+    #         self.driver.get(url_to_img)
 
-            url_to_img = self.base + self.country + "/" + self.sku_reference + "/" + f'{seller}.png'
-            url_to_img += f"?force=1&zero=0&w={self.width}&h={self.height}&desired=false&legend=1&ilt=1&tp=all&fo=0&lang=fr_FR"
+    #         time.sleep(np.random.randint(20, 30))
 
-            self.driver.get(url_to_img)
+    #         requests = pd.Series(self.driver.requests)
 
-            time.sleep(np.random.randint(20, 30))
+    #         request_headers = requests.map(
+    #             lambda request: (
+    #                 request.response.headers['Content-Type']
+    #                 if request.response is not None
+    #                 and isinstance(request.response.headers['Content-Type'], str)
+    #                 else ''
+    #             )
+    #         )
 
-            requests = pd.Series(self.driver.requests)
+    #         img_requests = requests[
+    #             request_headers.map(
+    #                 lambda request_header: guess_extension(
+    #                     request_header.split(';')[0].strip()
+    #                 ) == ".png"
+    #             )
+    #         ].copy()
 
-            request_headers = requests.map(
-                lambda request: (
-                    request.response.headers['Content-Type']
-                    if request.response is not None
-                    and isinstance(request.response.headers['Content-Type'], str)
-                    else ''
-                )
-            )
+    #         request = img_requests.iloc[len(img_requests) - 1]
 
-            img_requests = requests[
-                request_headers.map(
-                    lambda request_header: guess_extension(
-                        request_header.split(';')[0].strip()
-                    ) == ".png"
-                )
-            ].copy()
+    #         file_name = os.path.join(self.temp_folder, self.sku_reference + "_" + seller) + '.png'
 
-            request = img_requests.iloc[len(img_requests) - 1]
+    #         with open(file_name, 'wb') as file:
+    #             file.write(request.response.body)
 
-            file_name = os.path.join(self.temp_folder, self.sku_reference + "_" + seller) + '.png'
-
-            with open(file_name, 'wb') as file:
-                file.write(request.response.body)
-
-            self.paths_to_charts[seller] = file_name
+    #         self.paths_to_charts[seller] = file_name
 
     def build_price_history_from_charts(self):
 
-        self.price_histories = self.sellers.copy()
+        self.paths_to_charts = copy.deepcopy(self.sellers)
+
+        for seller in self.paths_to_charts.keys():
+
+            seller_country_dir = os.path.join(data_raw_dir, f'charts_{seller}_{self.country}')
+
+            self.paths_to_charts[seller] = os.path.join(seller_country_dir, f'{self.sku_reference}.png')
+
+        self.price_histories = copy.deepcopy(self.sellers)
 
         for seller, file_name in self.paths_to_charts.items():
 
@@ -249,11 +247,18 @@ class AmazonPriceCollector():
 
     def get_start_end_dates_from_charts(self):
 
-        self.start_end_dates = self.sellers.copy()
+        self.start_end_dates = copy.deepcopy(self.sellers)
 
         for seller, file_name in self.paths_to_charts.items():
 
             img = Image.open(file_name)
+
+            img_array = np.array(img)
+
+            # Bottom half of the image
+            img_array = img_array[int(img_array.shape[0] / 2):, :, :].copy()
+
+            img = Image.fromarray(img_array)
 
             text = pytesseract.image_to_string(img, lang='eng')
 
@@ -288,8 +293,8 @@ class AmazonPriceCollector():
             last_month = months[np.where(months_idx_right == np.nanmax(months_idx_right))][0]
 
             # Getting first and last years
-            first_year = 2000 + int(re.findall(r'[^€,](\d\d)', text_extract)[0])
-            last_year = 2000 + int(re.findall(r'[^€,](\d\d)', text_extract)[-1])
+            first_year = 2000 + int(re.findall(r'[^€\d+,](\d\d)', text_extract)[0])
+            last_year = 2000 + int(re.findall(r'[^€\d+,](\d\d)', text_extract)[-1])
 
             # Correcting first and last months if needed
             if text_extract.find(str(first_year - 2000)) < text_extract.find(first_month):
@@ -307,7 +312,7 @@ class AmazonPriceCollector():
 
     def get_end_date_from_price_history_summary(self):
 
-        self.clean_end_dates = self.sellers.copy()
+        self.clean_end_dates = copy.deepcopy(self.sellers)
 
         for seller in self.clean_end_dates.keys():
 
@@ -332,10 +337,10 @@ class AmazonPriceCollector():
 
     def convert_coordinates_to_timestamps(self):
 
-        self.first_date_x_axis = self.sellers
-        self.last_date_x_axis = self.sellers
-        self.last_date_clean = self.sellers
-        self.hour_increment = self.sellers
+        self.first_date_x_axis = copy.deepcopy(self.sellers)
+        self.last_date_x_axis = copy.deepcopy(self.sellers)
+        self.last_date_clean = copy.deepcopy(self.sellers)
+        self.hour_increment = copy.deepcopy(self.sellers)
 
         for seller in self.price_histories.keys():
 
@@ -585,14 +590,6 @@ class AmazonPriceCollector():
                 os.path.join(self.path_to_price_data, 'collection_metadata.csv'),
                 index=False
             )
-
-    def clean_everything(self):
-
-        self.driver.quit()
-
-        # for _, file_name in self.paths_to_charts.items():
-
-        #     os.system(f"rm {file_name}")
 
 
 if __name__ == "__main__":
