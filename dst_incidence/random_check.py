@@ -1,6 +1,10 @@
 import os
 
-from dst_incidence.utils import draw_random_sku_country, add_slide_with_image_and_plot, create_own_graph_for_random_check
+from dst_incidence.utils import (
+    draw_random_sku_country,
+    add_slide_with_image_and_plot,
+    create_own_graph_for_random_check,
+)
 
 import numpy as np
 import pandas as pd

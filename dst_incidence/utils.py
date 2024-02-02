@@ -222,7 +222,8 @@ def get_dates_from_text_extract(text_extract):
 
 # Function to add a slide with side-by-side image and plot
 def add_slide_with_image_and_plot(prs, image_path, matplotlib_plot):
-    slide_layout = prs.slide_layouts[5]  # Use a content with caption layout (could be different based on your preference)
+    # Use a content with caption layout
+    slide_layout = prs.slide_layouts[5]
 
     # Remove the title placeholder from the slide layout
     for shape in slide_layout.placeholders:
@@ -256,14 +257,15 @@ def add_slide_with_image_and_plot(prs, image_path, matplotlib_plot):
 
 
 def create_own_graph_for_random_check(
-        seller,
-        new_trusted_dfs,
-        new_not_trusted_dfs,
-        amazon_trusted_dfs,
-        amazon_not_trusted_dfs,
-        max_prices,
-        min_prices
-    ):
+    seller,
+    new_trusted_dfs,
+    new_not_trusted_dfs,
+    amazon_trusted_dfs,
+    amazon_not_trusted_dfs,
+    max_prices,
+    min_prices
+):
+
     if seller == "amazon":
         trusted_dfs = amazon_trusted_dfs.copy()
         not_trusted_dfs = amazon_not_trusted_dfs.copy()
