@@ -10,3 +10,5 @@ groupama/data/base_pno.*
 .DS_Store
 .idea/
 dst_incidence.egg-info/
+tests/*.pptx
+dst_incidence/data/prices/*.csv
