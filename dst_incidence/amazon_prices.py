@@ -180,7 +180,7 @@ class PriceHistoryCollector():
                 print("No maximum price for the chart with seller ==", seller)
                 print("--- Skipping the extraction of the corresponding price history.")
 
-                empty_df = {'x_axis_coord': [], 'trusted': [], 'price': [],}
+                empty_df = {'x_axis_coord': [], 'trusted': [], 'price': []}
                 empty_df = pd.DataFrame(empty_df)
 
                 self.price_histories[seller] = empty_df.copy()
@@ -210,7 +210,7 @@ class PriceHistoryCollector():
                 print("No minimum price for the chart with seller ==", seller)
                 print("--- Skipping the extraction of the corresponding price history.")
 
-                empty_df = {'x_axis_coord': [], 'trusted': [], 'price': [],}
+                empty_df = {'x_axis_coord': [], 'trusted': [], 'price': []}
                 empty_df = pd.DataFrame(empty_df)
 
                 self.price_histories[seller] = empty_df.copy()
@@ -242,7 +242,7 @@ class PriceHistoryCollector():
                 print("No pixel with the relevant RGB code for the chart with seller ==", seller)
                 print("--- Skipping the extraction of the corresponding price history.")
 
-                empty_df = {'x_axis_coord': [], 'trusted': [], 'price': [],}
+                empty_df = {'x_axis_coord': [], 'trusted': [], 'price': []}
                 empty_df = pd.DataFrame(empty_df)
 
                 self.price_histories[seller] = empty_df.copy()
@@ -345,12 +345,13 @@ class PriceHistoryCollector():
                 [
                     1 / 2,   # Bottom half of the image
                     1 / 3,   # Bottom two thirds of the image
-                    2 / 3    # Bottom third of the image
+                    2 / 3,   # Bottom third of the image
+                    3 / 4    # Bottom quarter of the image
                 ]
             ):
-                img_array = img_array[int(img_array.shape[0] * multiplier):, :, :].copy()
+                img_array_tmp = img_array[int(img_array.shape[0] * multiplier):, :, :].copy()
 
-                img = Image.fromarray(img_array)
+                img = Image.fromarray(img_array_tmp)
 
                 text = pytesseract.image_to_string(img, lang='eng')
 
@@ -364,6 +365,11 @@ class PriceHistoryCollector():
 
                 text_extracts.append(text_tmp)
 
+            first_months = []
+            first_years = []
+            last_months = []
+            last_years = []
+
             for i, text_extract in enumerate(text_extracts):
 
                 if i < len(text_extracts) - 1:
@@ -374,7 +380,10 @@ class PriceHistoryCollector():
 
                             first_month, first_year, last_month, last_year = get_dates_from_text_extract(text_extract)
 
-                            break
+                            first_months.append(first_month)
+                            first_years.append(first_year)
+                            last_months.append(last_month)
+                            last_years.append(last_year)
 
                         except IndexError:
 
@@ -386,7 +395,31 @@ class PriceHistoryCollector():
 
                 else:
 
-                    first_month, first_year, last_month, last_year = get_dates_from_text_extract(text_extract)
+                    # Once we have analysed three text extracts, if at least one was successful, we break the iteration
+                    if (
+                        len(first_months) > 0
+                        and len(first_years) > 0
+                        and len(last_months) > 0
+                        and len(last_years) > 0
+                    ):
+
+                        break
+
+                    # If none was successful, we have to make another try
+                    else:
+
+                        first_month, first_year, last_month, last_year = get_dates_from_text_extract(text_extract)
+
+                        first_months.append(first_month)
+                        first_years.append(first_year)
+                        last_months.append(last_month)
+                        last_years.append(last_year)
+
+            # For each component of the dates we are after, we take the value that comes out most often
+            first_month = max(first_months, key=first_months.count)
+            first_year = max(first_years, key=first_years.count)
+            last_month = max(last_months, key=last_months.count)
+            last_year = max(last_years, key=last_years.count)
 
             # Converting to dates
             first_date = datetime.strptime(' '.join([first_month, str(first_year)]), "%b %Y")
@@ -412,7 +445,7 @@ class PriceHistoryCollector():
 
             final_last_date = last_date
 
-            if final_last_date < pd.to_datetime("2023-01-01"):
+            if final_last_date < pd.to_datetime("2024-01-01"):
                 print("'Manually' correcting the final date for seller ==", seller)
                 final_last_date = pd.to_datetime("2024-01-19" if seller == "amazon" else "2024-01-22")
 
@@ -497,7 +530,7 @@ class PriceHistoryCollector():
             [
                 'sku', 'country', 'unit', 'seller',
                 'min_price', 'min_price_date', 'max_price', 'max_price_date', 'current_price', 'current_price_date',
-                'average_price'
+                'average_price',
             ]
         ].copy()
 
@@ -552,10 +585,15 @@ class PriceHistoryCollector():
 
         # Saving the price history
         price_history = pd.concat([v for _, v in self.price_histories.items()])
+        price_history['trusted'] = price_history['trusted'].astype(bool)
 
         try:
 
-            price_history_old = pd.read_csv(os.path.join(self.path_to_price_data, 'price_history.csv'))
+            price_history_old = pd.read_csv(
+                os.path.join(self.path_to_price_data, 'price_history.csv'),
+                dtype={"trusted": bool, "price": float, "date": str, "sku": str, "country": str, "seller": str},
+                parse_dates=['date']
+            )
 
             price_history_old = price_history_old[
                 np.logical_or(
