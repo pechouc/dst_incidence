@@ -1,117 +1,106 @@
-
-from datetime import date
-
 import os
 
-from dst_incidence.utils import draw_random_sku_country
+from dst_incidence.utils import draw_random_sku_country, add_slide_with_image_and_plot, create_own_graph_for_random_check
 
 # Streamlit import
-import streamlit as st
-
-import matplotlib.pyplot as plt
+# import streamlit as st
 
 import numpy as np
 import pandas as pd
 
-
-path_to_dir = os.path.dirname(os.path.abspath(__file__))
-path_to_price_data = os.path.join(path_to_dir, 'data', 'prices')
-
-path_to_data_raw = "/Users/Paul-Emmanuel/Desktop/PhD/3_DST_incidence/data_raw"
-
-st.set_page_config(layout="wide")
-
-st.title('Random Checks')
-
-(
-    random_sku,
-    random_country,
-    new_trusted_dfs,
-    new_not_trusted_dfs,
-    amazon_trusted_dfs,
-    amazon_not_trusted_dfs,
-    max_prices,
-    min_prices
-) = draw_random_sku_country(path_to_price_data=path_to_price_data)
-
-paths_to_charts = {}
-
-for seller in ['new', 'amazon']:
-
-    paths_to_charts[seller] = os.path.join(path_to_data_raw, f"charts_{seller}_{random_country}", f"{random_sku}.png")
+from pptx import Presentation
+from pptx.util import Inches
 
 
-st.markdown("# Useful information")
+if __name__ == "__main__":
 
-st.markdown(random_sku)
-st.markdown(random_country)
+    # Create a presentation object
+    prs = Presentation()
 
-st.markdown("---")
+    # Set the slide width and height (wide layout)
+    prs.slide_width = Inches(16)  # Width of the slide (in inches)
+    prs.slide_height = Inches(9)   # Height of the slide (in inches)
 
-st.markdown("# Choice of seller")
+    path_to_dir = os.path.dirname(os.path.abspath(__file__))
+    path_to_price_data = os.path.join(path_to_dir, 'data', 'prices')
 
-seller = st.selectbox(label="Type of seller", options=['new', 'amazon'])
+    path_to_data_raw = "/Users/Paul-Emmanuel/Desktop/PhD/3_DST_incidence/data_raw"
 
-st.markdown("---")
+    # st.set_page_config(layout="wide")
 
-st.markdown("# Graphs")
+    # st.title('Random Checks')
 
-col1, col2 = st.columns(spec=2)
+    for _ in range(20):
 
-with col1:
-    st.image(paths_to_charts[seller])
+        (
+            random_sku,
+            random_country,
+            new_trusted_dfs,
+            new_not_trusted_dfs,
+            amazon_trusted_dfs,
+            amazon_not_trusted_dfs,
+            max_prices,
+            min_prices
+        ) = draw_random_sku_country(path_to_price_data=path_to_price_data)
 
-# --- Graphs based on our data
+        # Add a section title slide
+        slide_layout = prs.slide_layouts[0]  # Use the layout suitable for section titles
+        slide = prs.slides.add_slide(slide_layout)
 
-if seller == "amazon":
-    trusted_dfs = amazon_trusted_dfs.copy()
-    not_trusted_dfs = amazon_not_trusted_dfs.copy()
-else:
-    trusted_dfs = new_trusted_dfs.copy()
-    not_trusted_dfs = new_not_trusted_dfs.copy()
+        # Set the title and subtitle (change as per your requirement)
+        title = slide.shapes.title
+        title.text = f"{random_sku} - {random_country}"
 
-fig, ax = plt.subplots(figsize=(15, 11))
+        for seller in ['new', 'amazon']:
 
-min_date_trusted = date.fromisoformat('2026-12-04')
-max_date_trusted = date.fromisoformat('2001-12-04')
-min_date_not_trusted = date.fromisoformat('2026-12-04')
-max_date_not_trusted = date.fromisoformat('2001-12-04')
+            paths_to_chart = os.path.join(
+                path_to_data_raw, f"charts_{seller}_{random_country}", f"{random_sku}.png"
+            )
 
-for i, trusted_df in enumerate(trusted_dfs):
-    if i == 0:
-        min_date_trusted = trusted_df['date'].min()
-    if i == len(trusted_dfs) - 1:
-        max_date_trusted = trusted_df['date'].max()
+        # st.markdown("# Useful information")
 
-    ax.plot(
-        trusted_df['date'],
-        trusted_df['price'],
-        color='darkblue' if seller == "new" else "green"
+        # st.markdown(random_sku)
+        # st.markdown(random_country)
+
+        # st.markdown("---")
+
+        # st.markdown("# Choice of seller")
+
+        # seller = st.selectbox(label="Type of seller", options=['new', 'amazon'])
+
+        # st.markdown("---")
+
+        # st.markdown("# Graphs")
+
+        # col1, col2 = st.columns(spec=2)
+
+        # with col1:
+        #     st.image(paths_to_charts[seller])
+
+            # --- Graphs based on our data
+
+            fig, ax = create_own_graph_for_random_check(
+                seller=seller,
+                new_trusted_dfs=new_trusted_dfs,
+                new_not_trusted_dfs=new_not_trusted_dfs,
+                amazon_trusted_dfs=amazon_trusted_dfs,
+                amazon_not_trusted_dfs=amazon_not_trusted_dfs,
+                max_prices=max_prices,
+                min_prices=min_prices
+            )
+
+            add_slide_with_image_and_plot(prs, paths_to_chart, fig)
+
+    prs.save(
+        os.path.join(
+            os.path.dirname(path_to_dir),
+            "tests",
+            "presentation_for_random_checks.pptx"
+        )
     )
 
-for i, not_trusted_df in enumerate(not_trusted_dfs):
-    if i == 0:
-        min_date_not_trusted = not_trusted_df['date'].min()
-    if i == len(not_trusted_dfs) - 1:
-        max_date_not_trusted = not_trusted_df['date'].max()
 
-    ax.scatter(
-        not_trusted_df['date'],
-        not_trusted_df['price'],
-        marker='s',
-        s=1,
-        color='darkred'
-    )
+        # fig.savefig("/Users/Desktop/temp.png")
 
-ax.hlines(
-    (max_prices[seller], min_prices[seller]),
-    xmin=min(min_date_trusted, min_date_not_trusted),
-    xmax=max(max_date_trusted, max_date_not_trusted),
-    colors=('red', 'green'),
-    linestyles='dashed',
-)
-
-# fig.savefig("/Users/Desktop/temp.png")
-
-with col2:
-    st.pyplot(fig, use_container_width=True)
+        # with col2:
+        #     st.pyplot(fig, use_container_width=True)
