@@ -6,16 +6,12 @@ import os
 path_to_dir = os.path.dirname(os.path.abspath(__file__))
 
 import time
+import copy
 
 from bs4 import BeautifulSoup
 
 import numpy as np
 import pandas as pd
-
-from mimetypes import guess_extension
-from seleniumwire import webdriver
-from selenium.webdriver.chrome.options import Options
-from fake_useragent import UserAgent
 
 from PIL import Image
 
@@ -28,37 +24,31 @@ import re
 
 from datetime import datetime, date
 
-from utils import clean_date_string
+from dst_incidence.utils import clean_date_string, get_dates_from_text_extract
+
 
 # ======================================================================================================================
-# --- Core Python class ------------------------------------------------------------------------------------------------
+# --- Python class to collect price histories --------------------------------------------------------------------------
 # ======================================================================================================================
 
-class AmazonPriceCollector():
+class PriceHistoryCollector():
 
-    def __init__(self, sku_reference, country, temp_folder):
+    def __init__(
+        self,
+        data_raw_dir,
+        sku_reference,
+        country
+    ):
 
-        np.random.seed(int(time.time()))
+        # Paul-Emmanuel - 22/01/2023
+        # Relevant "data_raw_dir" on my laptop: /Users/Paul-Emmanuel/Desktop/PhD/3_DST_incidence/data_raw
+
+        self.data_raw_dir = data_raw_dir
 
         self.sku_reference = sku_reference
         self.country = country
-        self.temp_folder = temp_folder
 
-        self.height = 6200
-        self.width = 12000
-        self.base = "https://charts.camelcamelcamel.com/"
-
-        ua = UserAgent()
-        user_agent = ua.random
-
-        options = Options()
-        options.add_argument(f"window-size={np.random.randint(100, 750)},{np.random.randint(100, 750)}")
-        options.add_argument("--auto-open-devtools-for-tabs")
-        # options.add_argument(f'--user-agent={user_agent}')
-
-        self.driver = webdriver.Chrome(chrome_options=options)
-
-        self.sellers = {'amazon': {}}
+        self.sellers = {'amazon': {}, 'new': {}}
 
         self.seller_colors = {
             'amazon': [99, 168, 94, 255],
@@ -73,16 +63,14 @@ class AmazonPriceCollector():
 
         self.path_to_price_data = os.path.join(path_to_dir, "data", "prices")
 
-        self.unit_correspondence = {'fr': '€'}
+        self.unit_correspondence = {'France': '€', 'Germany': '€'}
 
     def collect_and_clean_data(self):
 
-        self.fetch_additional_information()
-        self.fetch_price_history_charts()
+        self.fetch_product_information()
 
         self.build_price_history_from_charts()
         self.get_start_end_dates_from_charts()
-        self.get_end_date_from_price_history_summary()
         self.convert_coordinates_to_timestamps()
 
         self.format_price_histories()
@@ -92,90 +80,93 @@ class AmazonPriceCollector():
 
         self.save_results()
 
-        self.clean_everything()
+    def fetch_product_information(self):
 
-    def fetch_additional_information(self):
+        product_country_dir = f"products_{self.country}"
+        product_country_dir = os.path.join(self.data_raw_dir, product_country_dir)
 
-        url_to_info = f"https://{self.country}.camelcamelcamel.com/product/{self.sku_reference}?context=search"
+        relevant_files = [
+            file for file in os.listdir(product_country_dir) if file.endswith('html')
+        ]
 
-        self.driver.get(url_to_info)
+        for html_file in relevant_files:
 
-        soup = BeautifulSoup(self.driver.page_source, "html.parser")
+            path_to_html_file = os.path.join(product_country_dir, html_file)
 
-        if len(soup.find_all(class_="core-msg spacer")) > 0 and soup.find_all(class_="core-msg spacer")[0].text:
-            time.sleep(15 * 60)
+            with open(path_to_html_file, 'r') as html_file_opened:
+                html_content = html_file_opened.read()
 
-            soup = BeautifulSoup(self.driver.page_source, "html.parser")
+                if html_content.count(self.sku_reference) > 2:
+                    self.product_page_source = html_content
+                    self.full_product_name = html_file
+
+                else:
+                    continue
+
+        soup = BeautifulSoup(self.product_page_source, "html.parser")
 
         price_history_summary = pd.read_html(
             str(soup.find_all(class_='table-scroll camelegend')[0].find('table'))
         )[0]
         self.price_history_summary = price_history_summary.copy()
 
-        min_price = price_history_summary.set_index(
-            'Type de prix'
-        ).loc[
-            'Amazon', 'Le plus bas jamais atteint *'
-        ]
-        self.min_price = float(min_price[:min_price.find('€')].replace(',', '.'))
+        min_prices = copy.deepcopy(self.sellers)
+        max_prices = copy.deepcopy(self.sellers)
 
-        max_price = price_history_summary.set_index(
-            'Type de prix'
-        ).loc[
-            'Amazon', 'Le plus élevé de tous les temps *'
-        ]
-        self.max_price = float(max_price[:max_price.find('€')].replace(',', '.'))
+        for seller, _ in self.sellers.items():
+            if seller == 'amazon':
+                row_seller = 'Amazon'
+
+            elif seller == 'new':
+                row_seller = 'Nouveauté 3ème partie'
+
+            else:
+                row_seller = '3eme occasion'
+
+            min_price = price_history_summary.set_index(
+                'Type de prix'
+            ).loc[
+                row_seller, 'Le plus bas jamais atteint *'
+            ]
+            if '€' in min_price:
+                min_price = float(min_price[:min_price.find('€')].replace(',', '.'))
+            else:
+                if min_price.strip() == '-':
+                    min_price = np.nan
+                else:
+                    raise Exception("Special case in the price history summary table.")
+            min_prices[seller] = min_price
+
+            max_price = price_history_summary.set_index(
+                'Type de prix'
+            ).loc[
+                row_seller, 'Le plus élevé de tous les temps *'
+            ]
+            if '€' in max_price:
+                max_price = float(max_price[:max_price.find('€')].replace(',', '.'))
+            else:
+                if max_price.strip() == '-':
+                    max_price = np.nan
+                else:
+                    raise Exception("Special case in the price history summary table.")
+            max_prices[seller] = max_price
+
+        self.min_prices = copy.deepcopy(min_prices)
+        self.max_prices = copy.deepcopy(max_prices)
 
         self.product_data = pd.read_html(str(soup.find_all(class_='product_fields')[0]))[0]
 
-    def fetch_price_history_charts(self):
+    def build_price_history_from_charts(self):
 
-        del self.driver.requests
-
-        time.sleep(np.random.randint(20, 30))
-
-        self.paths_to_charts = self.sellers.copy()
+        self.paths_to_charts = copy.deepcopy(self.sellers)
 
         for seller in self.paths_to_charts.keys():
 
-            url_to_img = self.base + self.country + "/" + self.sku_reference + "/" + f'{seller}.png'
-            url_to_img += f"?force=1&zero=0&w={self.width}&h={self.height}&desired=false&legend=1&ilt=1&tp=all&fo=0&lang=fr_FR"
+            seller_country_dir = os.path.join(self.data_raw_dir, f'charts_{seller}_{self.country}')
 
-            self.driver.get(url_to_img)
+            self.paths_to_charts[seller] = os.path.join(seller_country_dir, f'{self.sku_reference}.png')
 
-            time.sleep(np.random.randint(20, 30))
-
-            requests = pd.Series(self.driver.requests)
-
-            request_headers = requests.map(
-                lambda request: (
-                    request.response.headers['Content-Type']
-                    if request.response is not None
-                    and isinstance(request.response.headers['Content-Type'], str)
-                    else ''
-                )
-            )
-
-            img_requests = requests[
-                request_headers.map(
-                    lambda request_header: guess_extension(
-                        request_header.split(';')[0].strip()
-                    ) == ".png"
-                )
-            ].copy()
-
-            request = img_requests.iloc[len(img_requests) - 1]
-
-            file_name = os.path.join(self.temp_folder, self.sku_reference + "_" + seller) + '.png'
-
-            with open(file_name, 'wb') as file:
-                file.write(request.response.body)
-
-            self.paths_to_charts[seller] = file_name
-
-    def build_price_history_from_charts(self):
-
-        self.price_histories = self.sellers.copy()
+        self.price_histories = copy.deepcopy(self.sellers)
 
         for seller, file_name in self.paths_to_charts.items():
 
@@ -185,14 +176,29 @@ class AmazonPriceCollector():
             # Pixels that have the RGB code for the maximum price
             y, x = np.where(np.all(img_array == [194, 68, 68, 255], axis=2))
 
+            if len(x) == 0:
+                print("No maximum price for the chart with seller ==", seller)
+                print("--- Skipping the extraction of the corresponding price history.")
+
+                empty_df = {'x_axis_coord': [], 'trusted': [], 'price': []}
+                empty_df = pd.DataFrame(empty_df)
+
+                self.price_histories[seller] = empty_df.copy()
+
+                continue
+
             # Average y-coordinate of the left-most pixels with this RGB code
             avg_y_coord_max = img_array.shape[0] - y[np.where(x == min(x))].mean()
 
             # Minimum x-coordinate of the pixels with this RGB code outside of the horizontal dashed line
+            y_coords_max_price_dashed_line = list(y[np.where(x == min(x))])
+            y_coords_max_price_dashed_line_tolerance = y_coords_max_price_dashed_line.copy()
+            y_coords_max_price_dashed_line_tolerance.append(max(y_coords_max_price_dashed_line) + 1)
+            y_coords_max_price_dashed_line_tolerance.append(min(y_coords_max_price_dashed_line) - 1)
             outside_chart_x_coord = min(
                 x[
                     np.where(
-                        ~np.isin(y, y[np.where(x == min(x))])
+                        ~np.isin(y, y_coords_max_price_dashed_line_tolerance)
                     )
                 ]
             )
@@ -200,14 +206,29 @@ class AmazonPriceCollector():
             # Pixels that have the RGB code for the minimum price
             y, x = np.where(np.all(img_array == [119, 195, 107, 255], axis=2))
 
+            if len(x) == 0:
+                print("No minimum price for the chart with seller ==", seller)
+                print("--- Skipping the extraction of the corresponding price history.")
+
+                empty_df = {'x_axis_coord': [], 'trusted': [], 'price': []}
+                empty_df = pd.DataFrame(empty_df)
+
+                self.price_histories[seller] = empty_df.copy()
+
+                continue
+
             # Average y-coordinate of the left-most pixels with this RGB code
             avg_y_coord_min = img_array.shape[0] - y[np.where(x == min(x))].mean()
 
             # Minimum x-coordinate of the pixels with this RGB code outside of the horizontal dashed line
+            y_coords_min_price_dashed_line = list(y[np.where(x == min(x))])
+            y_coords_min_price_dashed_line_tolerance = y_coords_min_price_dashed_line.copy()
+            y_coords_min_price_dashed_line_tolerance.append(max(y_coords_min_price_dashed_line) + 1)
+            y_coords_min_price_dashed_line_tolerance.append(min(y_coords_min_price_dashed_line) - 1)
             outside_chart_x_coord_bis = min(
                 x[
                     np.where(
-                        ~np.isin(y, y[np.where(x == min(x))])
+                        ~np.isin(y, y_coords_min_price_dashed_line_tolerance)
                     )
                 ]
             )
@@ -217,85 +238,188 @@ class AmazonPriceCollector():
 
             y, x = np.where(np.all(img_array == self.seller_colors[seller], axis=2))
 
+            if len(x) == 0:
+                print("No pixel with the relevant RGB code for the chart with seller ==", seller)
+                print("--- Skipping the extraction of the corresponding price history.")
+
+                empty_df = {'x_axis_coord': [], 'trusted': [], 'price': []}
+                empty_df = pd.DataFrame(empty_df)
+
+                self.price_histories[seller] = empty_df.copy()
+
+                continue
+
             x_axis_coords = []
             avg_y_coords = []
+
+            max_y_axis_coords = []
+            min_y_axis_coords = []
 
             for x_axis_coord in np.unique(x):
                 if x_axis_coord < outside_chart_x_coord_bis:
                     y_coords = y[np.where(x == x_axis_coord)]
                     y_coords = y_coords[y_coords < 2400 - avg_y_coord_min].copy()
 
+                    if len(y_coords) == 0:
+                        continue
+
                     avg_y_coord = img_array.shape[0] - y_coords.mean()
 
+                    max_y_axis_coord = img_array.shape[0] - y_coords.min()
+                    min_y_axis_coord = img_array.shape[0] - y_coords.max()
+
+                    max_y_axis_coords.append(max_y_axis_coord)
+                    min_y_axis_coords.append(min_y_axis_coord)
                     avg_y_coords.append(avg_y_coord)
                     x_axis_coords.append(x_axis_coord)
 
                 else:
                     continue
 
+            max_y_axis_coords = np.array(max_y_axis_coords)
+            min_y_axis_coords = np.array(min_y_axis_coords)
             x_axis_coords = np.array(x_axis_coords)
             avg_y_coords = np.array(avg_y_coords)
 
-            prices = (
-                self.min_price
-                + (avg_y_coords - avg_y_coord_min)
-                / (avg_y_coord_max - avg_y_coord_min)
-                * (self.max_price - self.min_price)
+            price_history = pd.DataFrame(
+                [x_axis_coords, avg_y_coords, max_y_axis_coords, min_y_axis_coords],
+                index=['x_axis_coord', 'avg_y_coords', 'max_y_axis_coord', 'min_y_axis_coord']
+            ).T
+
+            price_history['trusted'] = True
+
+            for i in range(1, 5):
+                price_history[f'lagged{i}_x_axis_coord'] = price_history['x_axis_coord'].shift(i)
+
+                price_history[f'lagged{i}_x_axis_coord_match'] = (
+                    price_history[f'lagged{i}_x_axis_coord'] == price_history['x_axis_coord'] - i
+                )
+
+                price_history['trusted'] = np.logical_and(
+                    price_history['trusted'],
+                    price_history[f'lagged{i}_x_axis_coord_match']
+                )
+
+            price_history['trusted'] = np.logical_or(
+                price_history['trusted'],
+                price_history['lagged4_x_axis_coord'].isnull()
             )
 
-            price_history = pd.DataFrame([x_axis_coords, prices], index=['x_axis_coord', 'price']).T
+            price_history['trusted'] = np.logical_or(
+                price_history['trusted'],
+                price_history['max_y_axis_coord'] - price_history['min_y_axis_coord'] > 3
+            )
+
+            price_history = price_history.drop(
+                columns=price_history.columns[
+                    price_history.columns.map(lambda col: col.startswith('lagged'))
+                ]
+            )
+
+            price_history = price_history.drop(columns=['max_y_axis_coord', 'min_y_axis_coord'])
+
+            price_history['price'] = (
+                self.min_prices[seller]
+                + (price_history['avg_y_coords'] - avg_y_coord_min)
+                / (avg_y_coord_max - avg_y_coord_min)
+                * (self.max_prices[seller] - self.min_prices[seller])
+            )
+
+            price_history = price_history.drop(columns=['avg_y_coords'])
 
             self.price_histories[seller] = price_history.copy()
 
     def get_start_end_dates_from_charts(self):
 
-        self.start_end_dates = self.sellers.copy()
+        self.start_end_dates = copy.deepcopy(self.sellers)
 
         for seller, file_name in self.paths_to_charts.items():
 
             img = Image.open(file_name)
 
-            text = pytesseract.image_to_string(img, lang='eng')
+            img_array = np.array(img)
 
-            # print(text)
+            text_extracts = []
 
-            text_extract = text[text.find('€'):text.rfind('Price type')]
+            for k, multiplier in enumerate(
+                [
+                    1 / 2,   # Bottom half of the image
+                    1 / 3,   # Bottom two thirds of the image
+                    2 / 3,   # Bottom third of the image
+                    3 / 4    # Bottom quarter of the image
+                ]
+            ):
+                img_array_tmp = img_array[int(img_array.shape[0] * multiplier):, :, :].copy()
 
-            # Getting the first month
-            months = np.array(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])
+                img = Image.fromarray(img_array_tmp)
 
-            months_idx = []
+                text = pytesseract.image_to_string(img, lang='eng')
 
-            for month in months:
-                months_idx.append(
-                    text_extract.find(month) if text_extract.find(month) > 0 else np.nan
-                )
+                # print(text)
 
-            months_idx = np.array(months_idx)
+                text_tmp = text[text.find('€'):text.rfind('Price type')]
 
-            first_month = months[np.where(months_idx == np.nanmin(months_idx))][0]
+                if len(text_tmp) == 0 and k == 2:
+                    if len(text_extracts[0]) == 0 and len(text_extracts[1]) == 0:
+                        text_tmp = text[:text.rfind('Price type')]
 
-            # Getting the last month
-            months_idx_right = []
+                text_extracts.append(text_tmp)
 
-            for month in months:
-                months_idx_right.append(
-                    text_extract.rfind(month) if text_extract.rfind(month) > -1 else np.nan
-                )
+            first_months = []
+            first_years = []
+            last_months = []
+            last_years = []
 
-            months_idx_right = np.array(months_idx_right)
+            for i, text_extract in enumerate(text_extracts):
 
-            last_month = months[np.where(months_idx_right == np.nanmax(months_idx_right))][0]
+                if i < len(text_extracts) - 1:
 
-            # Getting first and last years
-            first_year = 2000 + int(re.findall(r'[^€,](\d\d)', text_extract)[0])
-            last_year = 2000 + int(re.findall(r'[^€,](\d\d)', text_extract)[-1])
+                    if len(text_extract) > 0:
 
-            # Correcting first and last months if needed
-            if text_extract.find(str(first_year - 2000)) < text_extract.find(first_month):
-                first_month = 'Jan'
-            if text_extract.rfind(str(last_year - 2000)) > text_extract.rfind(last_month):
-                last_month = 'Jan'
+                        try:
+
+                            first_month, first_year, last_month, last_year = get_dates_from_text_extract(text_extract)
+
+                            first_months.append(first_month)
+                            first_years.append(first_year)
+                            last_months.append(last_month)
+                            last_years.append(last_year)
+
+                        except IndexError:
+
+                            continue
+
+                    else:
+
+                        continue
+
+                else:
+
+                    # Once we have analysed three text extracts, if at least one was successful, we break the iteration
+                    if (
+                        len(first_months) > 0
+                        and len(first_years) > 0
+                        and len(last_months) > 0
+                        and len(last_years) > 0
+                    ):
+
+                        break
+
+                    # If none was successful, we have to make another try
+                    else:
+
+                        first_month, first_year, last_month, last_year = get_dates_from_text_extract(text_extract)
+
+                        first_months.append(first_month)
+                        first_years.append(first_year)
+                        last_months.append(last_month)
+                        last_years.append(last_year)
+
+            # For each component of the dates we are after, we take the value that comes out most often
+            first_month = max(first_months, key=first_months.count)
+            first_year = max(first_years, key=first_years.count)
+            last_month = max(last_months, key=last_months.count)
+            last_year = max(last_years, key=last_years.count)
 
             # Converting to dates
             first_date = datetime.strptime(' '.join([first_month, str(first_year)]), "%b %Y")
@@ -305,58 +429,32 @@ class AmazonPriceCollector():
             self.start_end_dates[seller]['first_date'] = first_date
             self.start_end_dates[seller]['last_date'] = last_date
 
-    def get_end_date_from_price_history_summary(self):
-
-        self.clean_end_dates = self.sellers.copy()
-
-        for seller in self.clean_end_dates.keys():
-
-            str_value = self.price_history_summary.set_index(
-                'Type de prix'
-            ).loc[
-                self.seller_correspondence[seller], 'Actuel +'
-            ]
-
-            if str_value != '-':
-
-                last_date_clean = datetime.strptime(
-                    clean_date_string(str_value),
-                    "%d %b %Y"
-                )
-
-                self.clean_end_dates[seller] = last_date_clean
-
-            else:
-
-                self.clean_end_dates[seller] = np.nan
-
     def convert_coordinates_to_timestamps(self):
 
-        self.first_date_x_axis = self.sellers
-        self.last_date_x_axis = self.sellers
-        self.last_date_clean = self.sellers
-        self.hour_increment = self.sellers
+        self.first_date_x_axis = copy.deepcopy(self.sellers)
+        self.last_date_x_axis = copy.deepcopy(self.sellers)
+        self.hour_increment = copy.deepcopy(self.sellers)
 
         for seller in self.price_histories.keys():
 
             first_date = self.start_end_dates[seller]['first_date']
             last_date = self.start_end_dates[seller]['last_date']
 
-            last_date_clean = self.clean_end_dates[seller]
-
             self.first_date_x_axis[seller] = first_date
             self.last_date_x_axis[seller] = last_date
-            self.last_date_clean[seller] = last_date_clean
 
-            if isinstance(last_date_clean, float) and np.isnan(last_date_clean):
-                final_last_date = last_date
+            final_last_date = last_date
 
-            else:
-                final_last_date = last_date_clean
+            if final_last_date < pd.to_datetime("2024-01-01"):
+                print("'Manually' correcting the final date for seller ==", seller)
+                final_last_date = pd.to_datetime("2024-01-19" if seller == "amazon" else "2024-01-22")
 
             time_delta = final_last_date - first_date
 
-            hour_increment = time_delta.days * 24 / len(self.price_histories[seller])
+            hour_increment = time_delta.days * 24 / (
+                self.price_histories[seller]['x_axis_coord'].max()
+                - self.price_histories[seller]['x_axis_coord'].min()
+            )
 
             self.hour_increment[seller] = hour_increment
 
@@ -432,7 +530,7 @@ class AmazonPriceCollector():
             [
                 'sku', 'country', 'unit', 'seller',
                 'min_price', 'min_price_date', 'max_price', 'max_price_date', 'current_price', 'current_price_date',
-                'average_price'
+                'average_price',
             ]
         ].copy()
 
@@ -477,7 +575,6 @@ class AmazonPriceCollector():
             'collection_date': [date.today()] * len(sellers),
             'first_date_x_axis': [self.first_date_x_axis[seller] for seller in sellers],
             'last_date_x_axis': [self.last_date_x_axis[seller] for seller in sellers],
-            'last_date_clean': [self.last_date_clean[seller] for seller in sellers],
             'nb_x_axis_coords': [self.price_histories[seller].shape[0] for seller in sellers],
             'hour_increment': [self.hour_increment[seller] for seller in sellers],
         }
@@ -488,10 +585,15 @@ class AmazonPriceCollector():
 
         # Saving the price history
         price_history = pd.concat([v for _, v in self.price_histories.items()])
+        price_history['trusted'] = price_history['trusted'].astype(bool)
 
         try:
 
-            price_history_old = pd.read_csv(os.path.join(self.path_to_price_data, 'price_history.csv'))
+            price_history_old = pd.read_csv(
+                os.path.join(self.path_to_price_data, 'price_history.csv'),
+                dtype={"trusted": bool, "price": float, "date": str, "sku": str, "country": str, "seller": str},
+                parse_dates=['date']
+            )
 
             price_history_old = price_history_old[
                 np.logical_or(
@@ -504,7 +606,7 @@ class AmazonPriceCollector():
 
             price_history.to_csv(os.path.join(self.path_to_price_data, 'price_history.csv'), index=False)
 
-        except:
+        except FileNotFoundError:
 
             price_history.to_csv(os.path.join(self.path_to_price_data, 'price_history.csv'), index=False)
 
@@ -527,7 +629,7 @@ class AmazonPriceCollector():
                 index=False
             )
 
-        except:
+        except FileNotFoundError:
 
             self.price_history_summary.to_csv(
                 os.path.join(self.path_to_price_data, 'price_history_summary.csv'),
@@ -553,7 +655,7 @@ class AmazonPriceCollector():
                 index=False
             )
 
-        except:
+        except FileNotFoundError:
 
             self.product_data.to_csv(
                 os.path.join(self.path_to_price_data, 'product_data.csv'),
@@ -579,30 +681,62 @@ class AmazonPriceCollector():
                 index=False
             )
 
-        except:
+        except FileNotFoundError:
 
             self.collection_metadata.to_csv(
                 os.path.join(self.path_to_price_data, 'collection_metadata.csv'),
                 index=False
             )
 
-    def clean_everything(self):
-
-        self.driver.quit()
-
-        # for _, file_name in self.paths_to_charts.items():
-
-        #     os.system(f"rm {file_name}")
-
 
 if __name__ == "__main__":
 
-    collector = AmazonPriceCollector(
-        sku_reference="B000CRBEJ2",
-        country="fr",
-        temp_folder="/Users/Paul-Emmanuel/Desktop/PhD/3_DST_incidence/dst_incidence/notebooks/temp"
-    )
+    data_raw_dir = "/Users/Paul-Emmanuel/Desktop/PhD/3_DST_incidence/data_raw"
 
-    collector.collect_and_clean_data()
+    relevant_combinations = []
 
-    print(collector.price_histories['amazon'].head())
+    for folder in os.listdir(data_raw_dir):
+
+        folder = folder.strip("/")
+
+        if folder.startswith("charts_amazon"):
+
+            combination = {}
+
+            folder_decomposed = folder.split("_")
+            combination["country"] = folder_decomposed[2]
+
+            charts = os.path.join(data_raw_dir, folder)
+            combination["skus"] = [sku.strip(".png") for sku in os.listdir(charts) if sku.startswith("B")]
+
+            relevant_combinations.append(combination)
+
+        else:
+            continue
+
+    for combination in relevant_combinations:
+
+        print("Moving to country:", combination["country"])
+        print("-----------------------------------")
+
+        nb_skus = len(np.unique(combination["skus"]))
+
+        for i, sku in enumerate(np.unique(combination["skus"])):
+
+            print(f'SKU: {sku} ({i + 1} / {nb_skus})')
+
+            collector = PriceHistoryCollector(
+                data_raw_dir=data_raw_dir,
+                sku_reference=sku,
+                country=combination["country"]
+            )
+
+            try:
+
+                collector.collect_and_clean_data()
+
+            except IndexError:
+
+                print("--- Moving forward but error here!")
+
+        print("===================================")
