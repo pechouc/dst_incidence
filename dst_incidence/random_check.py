@@ -2,9 +2,6 @@ import os
 
 from dst_incidence.utils import draw_random_sku_country, add_slide_with_image_and_plot, create_own_graph_for_random_check
 
-# Streamlit import
-# import streamlit as st
-
 import numpy as np
 import pandas as pd
 
@@ -25,10 +22,6 @@ if __name__ == "__main__":
     path_to_price_data = os.path.join(path_to_dir, 'data', 'prices')
 
     path_to_data_raw = "/Users/Paul-Emmanuel/Desktop/PhD/3_DST_incidence/data_raw"
-
-    # st.set_page_config(layout="wide")
-
-    # st.title('Random Checks')
 
     for _ in range(20):
 
@@ -57,26 +50,6 @@ if __name__ == "__main__":
                 path_to_data_raw, f"charts_{seller}_{random_country}", f"{random_sku}.png"
             )
 
-        # st.markdown("# Useful information")
-
-        # st.markdown(random_sku)
-        # st.markdown(random_country)
-
-        # st.markdown("---")
-
-        # st.markdown("# Choice of seller")
-
-        # seller = st.selectbox(label="Type of seller", options=['new', 'amazon'])
-
-        # st.markdown("---")
-
-        # st.markdown("# Graphs")
-
-        # col1, col2 = st.columns(spec=2)
-
-        # with col1:
-        #     st.image(paths_to_charts[seller])
-
             # --- Graphs based on our data
 
             fig, ax = create_own_graph_for_random_check(
@@ -98,9 +71,3 @@ if __name__ == "__main__":
             "presentation_for_random_checks.pptx"
         )
     )
-
-
-        # fig.savefig("/Users/Desktop/temp.png")
-
-        # with col2:
-        #     st.pyplot(fig, use_container_width=True)
